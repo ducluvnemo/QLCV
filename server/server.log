@@ -1,0 +1,7 @@
+2025-11-03 11:22:04 [SERVER] starting...
+2025-11-03 11:22:04 [SERVER] listening on port 5555
+2025-11-03 11:22:07 [SERVER] new connection from 127.0.0.1 on socket 5
+2025-11-03 11:22:07 [RECV][fd=5] HELLO SERVER
+2025-11-03 11:22:07 [SEND][fd=5] OK: received "HELLO SERVER"
+
+2025-11-03 11:22:07 [SERVER] socket 5 disconnected
