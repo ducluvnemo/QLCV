@@ -13,4 +13,20 @@
 #define CMD_LIST_PROJECT    "LIST_PROJECT"
 #define CMD_LIST_TASK       "LIST_TASK"
 
+// Extended features (GUI will use these)
+#define CMD_UPDATE_TASK_STATUS   "UPDATE_TASK_STATUS"
+#define CMD_SET_TASK_DATES       "SET_TASK_DATES"
+#define CMD_LIST_TASK_DETAIL     "LIST_TASK_DETAIL"
+
+#define CMD_ADD_COMMENT          "ADD_COMMENT"
+#define CMD_LIST_COMMENTS        "LIST_COMMENTS"
+
+#define CMD_ADD_ATTACHMENT       "ADD_ATTACHMENT"
+#define CMD_LIST_ATTACHMENTS     "LIST_ATTACHMENTS"
+
+#define CMD_SEND_CHAT            "SEND_CHAT"
+#define CMD_LIST_CHAT            "LIST_CHAT"
+
+#define CMD_LIST_TASK_GANTT      "LIST_TASK_GANTT"
+
 #endif

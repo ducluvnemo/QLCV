@@ -98,8 +98,21 @@ static void menu_after_login(int sockfd) {
             fgets(p3, sizeof(p3), stdin);
             p3[strcspn(p3, "\n")] = 0;
 
-            snprintf(cmd, sizeof(cmd), "%s|%s|%s|%s\n",
-                     CMD_CREATE_TASK, p1, p2, p3);
+            char assignee[256], start[256], end[256];
+            printf("Assignee username (must be a project member): ");
+            fgets(assignee, sizeof(assignee), stdin);
+            assignee[strcspn(assignee, "\n")] = 0;
+
+            printf("Start date (YYYY-MM-DD): ");
+            fgets(start, sizeof(start), stdin);
+            start[strcspn(start, "\n")] = 0;
+
+            printf("End date (YYYY-MM-DD): ");
+            fgets(end, sizeof(end), stdin);
+            end[strcspn(end, "\n")] = 0;
+
+            snprintf(cmd, sizeof(cmd), "%s|%s|%s|%s|%s|%s|%s\n",
+                     CMD_CREATE_TASK, p1, p2, p3, assignee, start, end);
             break;
 
         case 4: // ASSIGN TASK
