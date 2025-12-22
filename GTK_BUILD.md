@@ -51,6 +51,3 @@ cd client
   - LIST_TASK_GANTT
 
 - If you already have an old `project.db`, the server will automatically try to add missing columns (`status`, `start_date`, `end_date`).
-## Note bổ sung task đang tiến trình thành nhập % hoàn thành 1 -100 Chat tách giữa các dự án 
- - comment , add attachment
- - 

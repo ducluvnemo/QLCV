@@ -1,27 +1,35 @@
 CC = gcc
 CFLAGS = -Wall
+
+# ===== CLI client =====
+SRCS = client.c ui.c
+OBJS = $(SRCS:.c=.o)
+
+# ===== GTK client =====
 GTK_CFLAGS = $(shell pkg-config --cflags gtk+-3.0)
 GTK_LIBS   = $(shell pkg-config --libs gtk+-3.0)
 
+GTK_SRCS = gtk/main.c gtk/net.c
+GTK_OBJS = $(GTK_SRCS:.c=.o)
+
 all: client gtk_client
 
-client: client.o ui.o net.o
-	$(CC) $(CFLAGS) -o client client.o ui.o net.o
+# ---- CLI client ----
+client: $(OBJS)
+	$(CC) $(CFLAGS) -o client $(OBJS)
 
-gtk_client: gtk/main.o net.o
-	$(CC) $(CFLAGS) -o gtk_client gtk/main.o net.o $(GTK_LIBS)
+# ---- GTK client ----
+gtk_client: ui.o $(GTK_OBJS)
+	$(CC) $(CFLAGS) $(GTK_CFLAGS) \
+		-o gtk_client ui.o $(GTK_OBJS) \
+		$(GTK_LIBS) -pthread
 
-client.o: client.c
-	$(CC) $(CFLAGS) -c client.c
+# ---- Compile rules ----
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
-ui.o: ui.c
-	$(CC) $(CFLAGS) -c ui.c
-
-net.o: net.c
-	$(CC) $(CFLAGS) -c net.c
-
-gtk/main.o: gtk/main.c
-	$(CC) $(CFLAGS) -I. $(GTK_CFLAGS) -c gtk/main.c -o gtk/main.o
+gtk/%.o: gtk/%.c
+	$(CC) $(CFLAGS) $(GTK_CFLAGS) -c $< -o $@
 
 clean:
 	rm -f *.o gtk/*.o client gtk_client

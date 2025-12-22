@@ -35,6 +35,7 @@ int db_assign_task(int task_id, int user_id);
 
 // Extended features
 int db_update_task_status(int task_id, const char *status);
+int db_update_task_progress(int task_id, int progress);
 int db_set_task_dates(int task_id, const char *start_date, const char *end_date);
 int db_get_task_detail(int task_id, char *out, int out_size);
 int db_list_tasks_gantt(int project_id, char *out, int out_size);

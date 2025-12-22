@@ -45,6 +45,7 @@ int db_init(const char *path) {
         "description TEXT,"
         "assignee_id INTEGER,"
         "status TEXT DEFAULT 'NOT_STARTED',"
+        "progress INTEGER DEFAULT 0,"
         "start_date TEXT,"
         "end_date TEXT,"
         "created_at DATETIME DEFAULT CURRENT_TIMESTAMP"
@@ -101,6 +102,7 @@ int db_init(const char *path) {
 
         // tasks
         "ALTER TABLE tasks ADD COLUMN status TEXT DEFAULT 'NOT_STARTED'",
+        "ALTER TABLE tasks ADD COLUMN progress INTEGER DEFAULT 0",
         "ALTER TABLE tasks ADD COLUMN start_date TEXT",
         "ALTER TABLE tasks ADD COLUMN end_date TEXT",
         "ALTER TABLE tasks ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP",
@@ -391,7 +393,7 @@ int db_list_tasks_in_project(int project_id, char *out, int out_size) {
     sqlite3_stmt *stmt;
     const char *sql =
         "SELECT t.id, t.title, IFNULL(u.username, 'None') AS assignee, "
-        "IFNULL(t.status,'NOT_STARTED') AS status, IFNULL(t.start_date,''), IFNULL(t.end_date,'') "
+        "IFNULL(t.status,'NOT_STARTED') AS status, IFNULL(t.progress,0) AS progress, IFNULL(t.start_date,''), IFNULL(t.end_date,'') "
         "FROM tasks t "
         "LEFT JOIN users u ON t.assignee_id = u.id "
         "WHERE t.project_id = ?;";
@@ -409,15 +411,17 @@ int db_list_tasks_in_project(int project_id, char *out, int out_size) {
         const unsigned char *title = sqlite3_column_text(stmt, 1);
         const unsigned char *assignee = sqlite3_column_text(stmt, 2);
         const unsigned char *status = sqlite3_column_text(stmt, 3);
-        const unsigned char *start_date = sqlite3_column_text(stmt, 4);
-        const unsigned char *end_date = sqlite3_column_text(stmt, 5);
+        int progress = sqlite3_column_int(stmt, 4);
+        const unsigned char *start_date = sqlite3_column_text(stmt, 5);
+        const unsigned char *end_date = sqlite3_column_text(stmt, 6);
 
         snprintf(buf, sizeof(buf),
-                 "%d|%s|Assignee:%s|Status:%s|Start:%s|End:%s\n",
+                 "%d|%s|Assignee:%s|Status:%s|Progress:%d|Start:%s|End:%s\n",
                  id,
                  title ? (char *)title : "(null)",
                  assignee ? (char *)assignee : "None",
                  status ? (char *)status : "NOT_STARTED",
+                 progress,
                  start_date ? (char *)start_date : "",
                  end_date ? (char *)end_date : "");
 
@@ -443,6 +447,24 @@ int db_update_task_status(int task_id, const char *status) {
     return rc == SQLITE_DONE;
 }
 
+int db_update_task_progress(int task_id, int progress) {
+    // Keep backward compatibility with existing "status" column.
+    // We derive status from progress so UI can keep using the old status combo if needed.
+    const char *status = "NOT_STARTED";
+    if (progress >= 100) status = "DONE";
+    else if (progress > 0) status = "IN_PROGRESS";
+
+    sqlite3_stmt *stmt;
+    const char *sql = "UPDATE tasks SET progress = ?, status = ? WHERE id = ?";
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) return 0;
+    sqlite3_bind_int(stmt, 1, progress);
+    sqlite3_bind_text(stmt, 2, status, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 3, task_id);
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE;
+}
+
 int db_set_task_dates(int task_id, const char *start_date, const char *end_date) {
     sqlite3_stmt *stmt;
     const char *sql = "UPDATE tasks SET start_date = ?, end_date = ? WHERE id = ?";
@@ -459,20 +481,21 @@ int db_get_task_detail(int task_id, char *out, int out_size) {
     sqlite3_stmt *stmt;
     const char *sql =
         "SELECT t.id, t.project_id, t.title, t.description, IFNULL(u.username,'None'), "
-        "IFNULL(t.status,'NOT_STARTED'), IFNULL(t.start_date,''), IFNULL(t.end_date,'') "
+        "IFNULL(t.status,'NOT_STARTED'), IFNULL(t.progress,0), IFNULL(t.start_date,''), IFNULL(t.end_date,'') "
         "FROM tasks t LEFT JOIN users u ON t.assignee_id = u.id WHERE t.id = ?;";
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) return 0;
     sqlite3_bind_int(stmt, 1, task_id);
     if (sqlite3_step(stmt) != SQLITE_ROW) { sqlite3_finalize(stmt); return 0; }
-    snprintf(out, out_size, "%d|%d|%s|%s|Assignee:%s|Status:%s|Start:%s|End:%s\n",
+    snprintf(out, out_size, "%d|%d|%s|%s|Assignee:%s|Status:%s|Progress:%d|Start:%s|End:%s\n",
         sqlite3_column_int(stmt,0),
         sqlite3_column_int(stmt,1),
         (const char*)sqlite3_column_text(stmt,2),
         (const char*)sqlite3_column_text(stmt,3),
         (const char*)sqlite3_column_text(stmt,4),
         (const char*)sqlite3_column_text(stmt,5),
-        (const char*)sqlite3_column_text(stmt,6),
-        (const char*)sqlite3_column_text(stmt,7));
+        sqlite3_column_int(stmt,6),
+        (const char*)sqlite3_column_text(stmt,7),
+        (const char*)sqlite3_column_text(stmt,8));
     sqlite3_finalize(stmt);
     return 1;
 }
@@ -481,20 +504,21 @@ int db_list_tasks_gantt(int project_id, char *out, int out_size) {
     // Same as list_tasks but optimized for Gantt rendering.
     sqlite3_stmt *stmt;
     const char *sql =
-        "SELECT t.id, t.title, IFNULL(t.status,'NOT_STARTED'), IFNULL(t.start_date,''), IFNULL(t.end_date,''), IFNULL(u.username,'None') "
+        "SELECT t.id, t.title, IFNULL(t.status,'NOT_STARTED'), IFNULL(t.progress,0), IFNULL(t.start_date,''), IFNULL(t.end_date,''), IFNULL(u.username,'None') "
         "FROM tasks t LEFT JOIN users u ON t.assignee_id = u.id WHERE t.project_id = ?;";
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) return 0;
     sqlite3_bind_int(stmt, 1, project_id);
     out[0] = '\0';
     char buf[512];
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        snprintf(buf, sizeof(buf), "%d|%s|Status:%s|Start:%s|End:%s|Assignee:%s\n",
+        snprintf(buf, sizeof(buf), "%d|%s|Status:%s|Progress:%d|Start:%s|End:%s|Assignee:%s\n",
             sqlite3_column_int(stmt,0),
             (const char*)sqlite3_column_text(stmt,1),
             (const char*)sqlite3_column_text(stmt,2),
-            (const char*)sqlite3_column_text(stmt,3),
+            sqlite3_column_int(stmt,3),
             (const char*)sqlite3_column_text(stmt,4),
-            (const char*)sqlite3_column_text(stmt,5));
+            (const char*)sqlite3_column_text(stmt,5),
+            (const char*)sqlite3_column_text(stmt,6));
         strncat(out, buf, out_size - strlen(out) - 1);
     }
     sqlite3_finalize(stmt);

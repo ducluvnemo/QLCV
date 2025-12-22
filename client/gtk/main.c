@@ -11,12 +11,6 @@
 #include "../protocol.h"
 #include "net.h"
 
-/* ===== PROTOTYPES (auto-fixed) ===== */
-static void on_btn_list_comments(GtkButton *btn, gpointer user_data);
-static void on_btn_list_attachments(GtkButton *btn, gpointer user_data);
-
-
-
 typedef struct {
     int sockfd;
     char username[64];
@@ -48,6 +42,7 @@ typedef struct {
     GtkEntry *assign_user_entry;
     GtkEntry *task_id_entry;
     GtkComboBoxText *status_combo;
+    GtkSpinButton *progress_spin;
     GtkEntry *start_date_entry;
     GtkEntry *end_date_entry;
 
@@ -71,6 +66,8 @@ typedef struct {
     GtkTextView *chat_view;
     GtkEntry *chat_entry;
 } App;
+static void on_btn_list_comments(GtkButton *btn, gpointer user_data);
+static void on_btn_list_attachments(GtkButton *btn, gpointer user_data);
 
 static void show_msg(GtkWindow *parent, GtkMessageType type, const char *title, const char *msg) {
     GtkWidget *d = gtk_message_dialog_new(parent,
@@ -153,7 +150,24 @@ static void on_task_row_activated(GtkTreeView *view, GtkTreePath *path, GtkTreeV
         show_msg(GTK_WINDOW(a->main_win), GTK_MESSAGE_INFO, "Task Detail", "No detail");
         return;
     }
-    // payload example: id|project_id|title|description|Assignee:...|Status:...|Start:...|End:...
+    // payload example: id|project_id|title|description|Assignee:...|Status:...|Progress:...|Start:...|End:...
+    // Try to sync the Progress spinbutton with the returned detail.
+    {
+        char *tmp = g_strdup(payload);
+        char *save = NULL;
+        for (char *tok = strtok_r(tmp, "|", &save); tok; tok = strtok_r(NULL, "|", &save)) {
+            if (g_str_has_prefix(tok, "Progress:")) {
+                int p = atoi(tok + 9);
+                if (p < 0)
+                    p = 0;
+                else if (p > 100)
+                    p = 100;
+                if (a->progress_spin) gtk_spin_button_set_value(a->progress_spin, p);
+                break;
+            }
+        }
+        g_free(tmp);
+    }
     show_msg(GTK_WINDOW(a->main_win), GTK_MESSAGE_INFO, "Task Detail", payload);
 }
 
@@ -223,7 +237,7 @@ static void refresh_projects(App *a) {
 }
 
 static void refresh_tasks(App *a) {
-    char *pid = gtk_combo_box_text_get_active_text(a->tasks_project_combo);
+    const char *pid = gtk_combo_box_text_get_active_text(a->tasks_project_combo);
     if (!pid) {
         tasks_store_clear(a);
         return;
@@ -260,11 +274,13 @@ static void refresh_tasks(App *a) {
         const char *title = parts[1];
         const char *assignee = "";
         const char *status = "";
+        const char *progress = "";
         const char *start = "";
         const char *end = "";
         for (int i = 2; i < pc; i++) {
             if (g_str_has_prefix(parts[i], "Assignee:")) assignee = parts[i] + 9;
             else if (g_str_has_prefix(parts[i], "Status:")) status = parts[i] + 7;
+            else if (g_str_has_prefix(parts[i], "Progress:")) progress = parts[i] + 9;
             else if (g_str_has_prefix(parts[i], "Start:")) start = parts[i] + 6;
             else if (g_str_has_prefix(parts[i], "End:")) end = parts[i] + 4;
         }
@@ -276,8 +292,9 @@ static void refresh_tasks(App *a) {
             1, title,
             2, assignee,
             3, status,
-            4, start,
-            5, end,
+            4, progress,
+            5, start,
+            6, end,
             -1);
     }
     g_free(dup);
@@ -307,7 +324,7 @@ static gboolean gantt_draw_cb(GtkWidget *widget, cairo_t *cr, gpointer user_data
     const int day_w = 20;
 
     // collect
-    typedef struct { char title[128]; char assignee[64]; int start; int end; char status[32]; } T;
+    typedef struct { char title[128]; char assignee[64]; int start; int end; char status[32]; int progress; } T;
     T tasks[128];
     int n = 0;
 
@@ -323,10 +340,16 @@ static gboolean gantt_draw_cb(GtkWidget *widget, cairo_t *cr, gpointer user_data
         strncpy(tasks[n].title, parts[1], sizeof(tasks[n].title)-1);
         strncpy(tasks[n].assignee, "", sizeof(tasks[n].assignee)-1);
         strncpy(tasks[n].status, "NOT_STARTED", sizeof(tasks[n].status)-1);
+        tasks[n].progress = 0;
         int st = -1, en = -1;
         for (int i=2;i<pc;i++) {
             if (g_str_has_prefix(parts[i], "Status:")) {
                 strncpy(tasks[n].status, parts[i]+7, sizeof(tasks[n].status)-1);
+            } else if (g_str_has_prefix(parts[i], "Progress:")) {
+                int p = atoi(parts[i]+9);
+                if (p < 0) p = 0;
+                if (p > 100) p = 100;
+                tasks[n].progress = p;
             } else if (g_str_has_prefix(parts[i], "Assignee:")) {
                 strncpy(tasks[n].assignee, parts[i]+9, sizeof(tasks[n].assignee)-1);
             } else if (g_str_has_prefix(parts[i], "Start:")) {
@@ -375,9 +398,9 @@ static gboolean gantt_draw_cb(GtkWidget *widget, cairo_t *cr, gpointer user_data
         // show assignee next to task name (as requested)
         char label[256];
         if (tasks[i].assignee[0])
-            snprintf(label, sizeof(label), "%s (%s)", tasks[i].title, tasks[i].assignee);
+            snprintf(label, sizeof(label), "%s (%s) - %d%%", tasks[i].title, tasks[i].assignee, tasks[i].progress);
         else
-            snprintf(label, sizeof(label), "%s", tasks[i].title);
+            snprintf(label, sizeof(label), "%s - %d%%", tasks[i].title, tasks[i].progress);
         cairo_show_text(cr, label);
 
         int x1 = left + (tasks[i].start-1)*day_w;
@@ -452,7 +475,7 @@ static void on_login_or_register(App *a, gboolean is_register) {
 
     // set gantt default
     int pid = 0;
-    char *pid_str = gtk_combo_box_text_get_active_text(a->tasks_project_combo);
+    const char *pid_str = gtk_combo_box_text_get_active_text(a->tasks_project_combo);
     if (pid_str) pid = atoi(pid_str);
     refresh_gantt(a, pid);
 
@@ -504,14 +527,14 @@ static void on_btn_refresh_projects(GtkButton *btn, gpointer user_data) {
 static void on_tasks_project_changed(GtkComboBox *combo, gpointer user_data) {
     App *a = (App*)user_data;
     refresh_tasks(a);
-    char *pid = gtk_combo_box_text_get_active_text(a->tasks_project_combo);
+    const char *pid = gtk_combo_box_text_get_active_text(a->tasks_project_combo);
     refresh_gantt(a, pid ? atoi(pid) : 0);
     a->last_chat_id = 0; // reset chat when switching projects
 }
 
 static void on_btn_create_task(GtkButton *btn, gpointer user_data) {
     App *a = (App*)user_data;
-    char *pid = gtk_combo_box_text_get_active_text(a->tasks_project_combo);
+    const char *pid = gtk_combo_box_text_get_active_text(a->tasks_project_combo);
     if (!pid) return;
     const char *title = gtk_entry_get_text(a->task_title_entry);
     const char *desc = gtk_entry_get_text(a->task_desc_entry);
@@ -585,7 +608,34 @@ static void on_btn_update_status(GtkButton *btn, gpointer user_data) {
     if (code != 0) show_msg(GTK_WINDOW(a->main_win), GTK_MESSAGE_ERROR, "Error", payload);
     refresh_tasks(a);
 
-    char *pid = gtk_combo_box_text_get_active_text(a->tasks_project_combo);
+    const char *pid = gtk_combo_box_text_get_active_text(a->tasks_project_combo);
+    if (pid) refresh_gantt(a, atoi(pid));
+}
+
+static void on_btn_update_progress(GtkButton *btn, gpointer user_data) {
+    App *a = (App*)user_data;
+    int tid = get_selected_task_id(a);
+    if (tid <= 0) {
+        const char *t = gtk_entry_get_text(a->task_id_entry);
+        if (t && *t) tid = atoi(t);
+    }
+    if (tid <= 0) {
+        show_msg(GTK_WINDOW(a->main_win), GTK_MESSAGE_WARNING, "Info", "Chọn task hoặc nhập Task ID");
+        return;
+    }
+
+    int progress = (int)gtk_spin_button_get_value(a->progress_spin);
+    if (progress < 0) progress = 0;
+    if (progress > 100) progress = 100;
+
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "%s|%d|%d\n", CMD_UPDATE_TASK_PROGRESS, tid, progress);
+    char payload[512] = {0};
+    int code = net_request(a->sockfd, cmd, payload, sizeof(payload));
+    if (code != 0) show_msg(GTK_WINDOW(a->main_win), GTK_MESSAGE_ERROR, "Error", payload);
+
+    refresh_tasks(a);
+    const char *pid = gtk_combo_box_text_get_active_text(a->tasks_project_combo);
     if (pid) refresh_gantt(a, atoi(pid));
 }
 
@@ -608,7 +658,7 @@ static void on_btn_set_dates(GtkButton *btn, gpointer user_data) {
     int code = net_request(a->sockfd, cmd, payload, sizeof(payload));
     if (code != 0) show_msg(GTK_WINDOW(a->main_win), GTK_MESSAGE_ERROR, "Error", payload);
     refresh_tasks(a);
-    char *pid = gtk_combo_box_text_get_active_text(a->tasks_project_combo);
+    const char *pid = gtk_combo_box_text_get_active_text(a->tasks_project_combo);
     if (pid) refresh_gantt(a, atoi(pid));
 }
 
@@ -688,7 +738,7 @@ static void on_btn_list_attachments(GtkButton *btn, gpointer user_data) {
 
 static gboolean poll_chat(gpointer user_data) {
     App *a = (App*)user_data;
-    char *pid = gtk_combo_box_text_get_active_text(a->chat_project_combo);
+    const char *pid = gtk_combo_box_text_get_active_text(a->chat_project_combo);
     if (!pid) return TRUE;
 
     char cmd[128];
@@ -726,7 +776,7 @@ static gboolean poll_chat(gpointer user_data) {
 
 static void on_btn_send_chat(GtkButton *btn, gpointer user_data) {
     App *a = (App*)user_data;
-    char *pid = gtk_combo_box_text_get_active_text(a->chat_project_combo);
+    const char *pid = gtk_combo_box_text_get_active_text(a->chat_project_combo);
     const char *msg = gtk_entry_get_text(a->chat_entry);
     if (!pid || !msg || !*msg) return;
 
@@ -854,9 +904,9 @@ static GtkWidget* build_main(App *a) {
     GtkWidget *btn_refresh_tasks = gtk_button_new_with_label("Refresh tasks");
     gtk_box_pack_end(GTK_BOX(task_top), btn_refresh_tasks, FALSE, FALSE, 0);
 
-    a->tasks_store = gtk_list_store_new(6, G_TYPE_INT, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
-    const char *tcols[] = {"ID","Title","Assignee","Status","Start","End"};
-    a->tasks_view = GTK_TREE_VIEW(make_tree_view(a->tasks_store, tcols, 6));
+    a->tasks_store = gtk_list_store_new(7, G_TYPE_INT, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
+    const char *tcols[] = {"ID","Title","Assignee","Status","Progress","Start","End"};
+    a->tasks_view = GTK_TREE_VIEW(make_tree_view(a->tasks_store, tcols, 7));
     // double-click row to view task detail (includes description)
     g_signal_connect(a->tasks_view, "row-activated", G_CALLBACK(on_task_row_activated), a);
 
@@ -888,6 +938,12 @@ static GtkWidget* build_main(App *a) {
     gtk_combo_box_set_active(GTK_COMBO_BOX(a->status_combo), 0);
     GtkWidget *btn_status = gtk_button_new_with_label("Update status");
 
+    // Progress (%): 0..100
+    GtkAdjustment *adj = gtk_adjustment_new(0, 0, 100, 1, 10, 0);
+    a->progress_spin = GTK_SPIN_BUTTON(gtk_spin_button_new(adj, 1, 0));
+    gtk_spin_button_set_numeric(a->progress_spin, TRUE);
+    GtkWidget *btn_progress = gtk_button_new_with_label("Update progress (%)");
+
     a->start_date_entry = GTK_ENTRY(gtk_entry_new());
     gtk_entry_set_placeholder_text(a->start_date_entry, "Start YYYY-MM-DD");
     a->end_date_entry = GTK_ENTRY(gtk_entry_new());
@@ -909,6 +965,11 @@ static GtkWidget* build_main(App *a) {
     gtk_grid_attach(GTK_GRID(task_form), GTK_WIDGET(a->end_date_entry), 2,r,2,1);
     gtk_grid_attach(GTK_GRID(task_form), btn_dates, 4,r,1,1);
 
+    r++;
+    gtk_grid_attach(GTK_GRID(task_form), gtk_label_new("Progress (%)"), 0,r,1,1);
+    gtk_grid_attach(GTK_GRID(task_form), GTK_WIDGET(a->progress_spin), 1,r,1,1);
+    gtk_grid_attach(GTK_GRID(task_form), btn_progress, 2,r,2,1);
+
     gtk_box_pack_start(GTK_BOX(task_box), task_form, FALSE, FALSE, 0);
 
     g_signal_connect(a->tasks_project_combo, "changed", G_CALLBACK(on_tasks_project_changed), a);
@@ -916,6 +977,7 @@ static GtkWidget* build_main(App *a) {
     g_signal_connect(btn_create_task, "clicked", G_CALLBACK(on_btn_create_task), a);
     g_signal_connect(btn_assign, "clicked", G_CALLBACK(on_btn_assign_task), a);
     g_signal_connect(btn_status, "clicked", G_CALLBACK(on_btn_update_status), a);
+    g_signal_connect(btn_progress, "clicked", G_CALLBACK(on_btn_update_progress), a);
     g_signal_connect(btn_dates, "clicked", G_CALLBACK(on_btn_set_dates), a);
 
     gtk_notebook_append_page(GTK_NOTEBOOK(tabs), task_box, gtk_label_new("Tasks"));

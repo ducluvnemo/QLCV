@@ -299,6 +299,46 @@ void *client_handler(void *arg) {
         }
 
         /* ==========================
+              UPDATE TASK PROGRESS
+        ========================== */
+        else if (strcmp(cmd, CMD_UPDATE_TASK_PROGRESS) == 0) {
+            char *taskID_str = strtok(NULL, "|");
+            char *progress_str = strtok(NULL, "|\n");
+
+            if (!taskID_str || !progress_str) {
+                send_response(ci->sockfd, 1, "Invalid UPDATE_TASK_PROGRESS format");
+                continue;
+            }
+
+            int tid = atoi(taskID_str);
+            int progress = atoi(progress_str);
+            if (progress < 0 || progress > 100) {
+                send_response(ci->sockfd, 1, "Progress must be 0..100");
+                continue;
+            }
+
+            int pid = 0;
+            int assignee_id = 0;
+            if (!db_get_task_project_id(tid, &pid)) {
+                send_response(ci->sockfd, 1, "Task not found");
+                continue;
+            }
+
+            // permission: assignee can update their task; project owner can update any task
+            int is_owner = db_is_project_owner(pid, ci->user_id);
+            int is_assignee = (db_get_task_assignee_id(tid, &assignee_id) && assignee_id == ci->user_id);
+            if (!is_owner && !is_assignee) {
+                send_response(ci->sockfd, 1, "Only assignee or project owner can update progress");
+                continue;
+            }
+
+            if (db_update_task_progress(tid, progress))
+                send_response(ci->sockfd, 0, "Task progress updated");
+            else
+                send_response(ci->sockfd, 1, "Update progress failed");
+        }
+
+        /* ==========================
               SET TASK DATES
         ========================== */
         else if (strcmp(cmd, CMD_SET_TASK_DATES) == 0) {
